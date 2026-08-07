@@ -43,9 +43,10 @@ holds the shortest `i → j` path whose intermediate vertices all come from
 cheaper? — so after the last `k` the matrix is exact.
 
 - **Time:** O(n³), independent of m. **Space:** O(n²).
-- **Wins on:** dense graphs and small-to-medium n. Its cost is fixed by n
-  alone, so density is free — but that same property makes it wasteful on
-  sparse graphs, where it pays for n² pairs that mostly have no edge.
+- **Wins on:** dense graphs and small-to-medium n — measured 3.4× faster than
+  repeated Dijkstra at n = 500 dense. Its cost is fixed by n alone, so density
+  is free; that same property makes it wasteful on sparse graphs, where it pays
+  for n² pairs that mostly have no edge.
 - Handles negative edges; does not detect negative cycles.
 
 ### Johnson's algorithm — `johnson(graph)`
@@ -72,14 +73,15 @@ since `heapq` has no decrease-key, improved vertices are pushed again and stale
 entries are skipped on pop.
 
 - **Time:** O(n · (m + n log n)).
-- **Wins on:** sparse graphs with non-negative weights. When m ≪ n², n heap
-  searches beat Floyd-Warshall's fixed n³ comfortably — and in practice it is
-  the fastest exact algorithm here in *every* configuration tested, dense
-  included. See [finding 1](#1-repeated-dijkstra-beats-floyd-warshall-even-on-dense-graphs).
+- **Wins on:** sparse graphs with non-negative weights, by 5.7–6.9× over
+  Floyd-Warshall in the measured range. When m ≪ n², n heap searches beat
+  Floyd-Warshall's fixed n³ comfortably — but on dense input both are O(n³) and
+  Floyd-Warshall's smaller constant wins. See
+  [finding 1](#1-the-classic-regime-split-holds-cleanly--floyd-warshall-for-dense-dijkstra-for-sparse).
 - Textbook Dijkstra requires non-negative weights, but **this implementation
   keeps no settled set**, so it re-expands improved vertices and stays correct
   with negative edges absent a negative cycle. See
-  [finding 3](#3-this-dijkstra-is-not-textbook-dijkstra) — it is a real
+  [finding 5](#5-this-dijkstra-is-not-textbook-dijkstra) — it is a real
   robustness gain that costs the O(m log n) guarantee.
 
 ### Repeated Bellman-Ford — `all_pairs_bellman_ford(graph)`
@@ -114,7 +116,9 @@ sampled pivot lies on a path between the two vertices.
 - **Wins on:** large graphs where an exact matrix is too expensive to compute or
   even store. Accuracy rises with `k` — on a 40-vertex directed test graph it
   returns the exact distance for 90% of pairs at k = 5 and 98% at k = 20.
-- Requires non-negative weights, since the preprocessing is Dijkstra.
+- Inherits the Dijkstra implementation's tolerance for negative edges on graphs
+  without negative cycles (see
+  [finding 5](#5-this-dijkstra-is-not-textbook-dijkstra)).
 - Returns a **query function**, not a matrix. See
   [Notes and caveats](#notes-and-caveats) for what that means for the timings.
 
@@ -131,7 +135,7 @@ sampled pivot lies on a path between the two vertices.
 † Not a property of Dijkstra's algorithm — a property of *this* implementation,
 which omits the settled set and is therefore label-correcting. Correct without
 negative cycles, but without the O(m log n) bound. See
-[finding 3](#3-this-dijkstra-is-not-textbook-dijkstra).
+[finding 5](#5-this-dijkstra-is-not-textbook-dijkstra).
 
 ## Benchmark
 
@@ -223,10 +227,149 @@ counts, so it is the general escape hatch in both directions.
 
 ### Results
 
-The benchmark is currently being re-measured with `--full`: making the sparse
-and dense generators undirected doubled their edge counts and added the
-negative-weight configurations, so every previously published number is stale.
-Run `python benchmark.py` for the quick sweep in the meantime.
+Measured with `python benchmark.py --full --seed 1` on Python 3.11, in seconds.
+The full sweep took 1 h 53 m; every cell below is measured, none extrapolated.
+
+| Algorithm | 100 sparse | 100 dense | 100 negative | 500 sparse | 500 dense | 500 negative |
+|---|---|---|---|---|---|---|
+| Floyd-Warshall | 0.068 | **0.056** | 0.067 | 7.922 | **7.664** | 10.401 |
+| Johnson's | 0.029 | 4.354 | **0.008** | 8.078 | 3318.876 | 2.467 |
+| Repeated Dijkstra | **0.012** | 0.090 | **0.001** | **1.147** | 25.724 | **0.290** |
+| Repeated Bellman-Ford | 0.319 | 6.738 | 0.247 | 252.290 | 5553.765 | 185.007 |
+| Sketch approximation | 0.002 | 0.014 | 0.001 | 0.031 | 0.729 | 0.070 |
+
+Bold marks the fastest *exact* algorithm per column; the sketch is excluded from
+that comparison because it only measures preprocessing (see
+[Notes and caveats](#notes-and-caveats)).
+
+![Execution time of APSP algorithms across the six full-sweep configurations](docs/benchmark-full-sweep.png)
+
+Log scale — the algorithms span five orders of magnitude. Floyd-Warshall is
+the flat line; every other series spikes on the dense configurations.
+
+## Findings
+
+### 1. The classic regime split holds cleanly — Floyd-Warshall for dense, Dijkstra for sparse
+
+Each algorithm wins exactly where the textbook says it should, and the margins
+are wide enough to be unambiguous:
+
+| n = 500 | Floyd-Warshall | Repeated Dijkstra | Winner |
+|---|---|---|---|
+| sparse (12,358 entries) | 7.922 | 1.147 | Dijkstra, 6.9× |
+| dense (249,500 entries) | 7.664 | 25.724 | **Floyd-Warshall, 3.4×** |
+
+The mechanism is visible in the asymptotics. Repeated Dijkstra is
+O(n·(m + n log n)), so its cost rides on m; Floyd-Warshall is O(n³) and ignores
+m entirely. On the sparse graph m ≈ 25n and Dijkstra wins comfortably. On the
+dense graph m ≈ n², both become O(n³), and Floyd-Warshall's constant factor is
+smaller — a flat triple loop over a preallocated matrix beats n heap-driven
+searches with their pushes, pops and staleness checks.
+
+The crossover is not at 500 either: the quick sweep shows Floyd-Warshall ahead
+in the dense regime at n = 50, 100 and 150 as well, by a consistent ~1.6×. There
+is no size in the tested range where repeated Dijkstra wins on dense input.
+
+**This corrects an earlier result from this repo.** Before the generator fix,
+these same measurements showed the opposite — repeated Dijkstra beating
+Floyd-Warshall 4.6× on the 500-node dense graph, which looked like a genuine
+inversion of the textbook advice. It was an artifact. The old generators emitted
+edges only for `u < v`, so every graph was a DAG in which a search from vertex
+`u` could only reach vertices numbered above it. Each Dijkstra run explored half
+the graph on average, and runs from high-numbered vertices were nearly free,
+while Floyd-Warshall's n³ loop paid full price regardless. Making the graphs
+genuinely undirected removed the discount, and Dijkstra's 500-node dense time
+went from 2.198 s to 25.724 s — an 11.7× jump on a graph with only twice the
+edges.
+
+The methodological lesson is the useful part: a bug in input generation produced
+a plausible, quotable, and completely wrong headline result. It survived because
+it was *interesting* — an inverted textbook claim invites explanation rather than
+suspicion, and the explanation drafted for it (interpreted-Python constant
+factors) was perfectly reasonable. Nothing about the number itself looked wrong.
+
+### 2. Floyd-Warshall's runtime is independent of the edge count
+
+The cleanest empirical result in the sweep, and the one that survived the
+generator fix unchanged. Between 500 sparse and 500 dense the edge count rises
+**20.2×** (12,358 → 249,500 entries), and Floyd-Warshall goes from 7.922 s to
+7.664 s — it gets 3% *faster*, which is noise around a flat line.
+
+That is O(n³) with no m term, visible directly. The contrast with Bellman-Ford
+across the identical pair of graphs makes the point sharper:
+
+| 500 sparse → 500 dense | Time | Growth |
+|---|---|---|
+| Edge entries | 12,358 → 249,500 | 20.2× |
+| Floyd-Warshall | 7.922 → 7.664 | **0.97×** |
+| Repeated Bellman-Ford | 252.290 → 5553.765 | **22.0×** |
+
+Bellman-Ford's 22.0× against an edge growth of 20.2× tracks its O(n²·m) bound
+almost exactly. Floyd-Warshall is the only algorithm here whose cost is
+predictable from the vertex count alone — which is precisely what makes it
+reliable on dense input and wasteful on sparse input.
+
+### 3. Johnson's bottleneck is the graph representation, not the algorithm
+
+Johnson's takes **3318.876 s** on the 500-node dense graph — 55 minutes, and
+**129× slower** than the repeated Dijkstra it is built on top of. Since Johnson's
+*is* one Bellman-Ford pass plus n Dijkstra runs, and those n runs cost 25.724 s
+on their own, essentially the entire runtime is overhead.
+
+The overhead is `Graph.update_edge_weight`, which scans the whole edge list on
+every call. Reweighting all m edges therefore costs **O(m²)**, or 6.2 × 10¹⁰
+operations at 249,500 entries. The negative-weight configuration confirms the
+diagnosis: it has only 6,216 entries, so m² predicts a 1,611× reduction, and the
+measured drop is 1,345× (3318.876 s → 2.467 s). That is the right order for a
+prediction spanning three decades.
+
+Indexing the edge list by `(u, v)` would drop this to O(m) and bring Johnson's
+back in line with its O(n² log n + n·m) bound. Left as-is deliberately — the
+brief was to preserve the original implementations.
+
+### 4. The negative-weight regime is the only place Johnson's design pays off
+
+On the negative configurations Johnson's beats repeated Bellman-Ford by **75×**
+at n = 500 (2.467 s vs 185.007 s) and 31× at n = 100. That is exactly the
+comparison the algorithm was designed to win, and the original non-negative-only
+benchmark could never show it.
+
+The reason is structural: Johnson's does *one* O(n·m) Bellman-Ford pass to
+compute potentials and then n cheap Dijkstra runs, where repeated Bellman-Ford
+does n expensive Bellman-Ford runs. The saving grows with n, which is why the
+margin more than doubles from n = 100 to n = 500.
+
+This is also why the dense column should not be read as "Johnson's is slow."
+There it pays for a capability the input does not require: with non-negative
+weights Dijkstra alone is always legal, so reweighting is pure loss. Measure an
+algorithm outside the regime it was designed for and it will lose to something
+simpler — a statement about the benchmark, not the algorithm.
+
+### 5. This "Dijkstra" is not textbook Dijkstra
+
+Discovered while adding the negative-weight configurations. The implementation
+keeps **no settled/visited set** — the `d > dist[u]` test rejects only *stale*
+heap entries, not vertices that have already been expanded. A vertex whose
+distance later improves is pushed and expanded again, making this
+label-correcting rather than true Dijkstra.
+
+The consequence is that it returns **correct** distances on graphs with negative
+edges, provided there is no negative cycle. Verified against Floyd-Warshall
+across 25 random negative-weight graphs (zero disagreements) and on the standard
+counterexample where textbook Dijkstra fails:
+
+```
+0 →1 (w=2), 0 →2 (w=5), 1 →2 (w=-4)     true d(0,2) = -2
+settled-set Dijkstra: 5 (wrong — finalises vertex 2 before the shortcut)
+this implementation: -2 (correct — re-expands vertex 2)
+```
+
+So the benchmark runs all five algorithms on the negative configurations rather
+than skipping the two built on Dijkstra. The robustness is not free: the
+O(m log n) bound assumes one expansion per vertex, and negative edges break that
+assumption — re-expansions are cheap on these acyclic graphs but exponential in
+the worst case.
+
 
 ## Notes and caveats
 
