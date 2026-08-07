@@ -2,20 +2,23 @@
 
 Run from the command line:
 
-    python benchmark.py                        # full default sweep
-    python benchmark.py --sizes 100            # just the 100-vertex configs
+    python benchmark.py                        # quick default sweep, ~2 minutes
+    python benchmark.py --full                 # the 100/500 sweep, hours
+    python benchmark.py --sizes 100 200 300    # any sizes you like
     python benchmark.py -a dijkstra -a johnson # only some algorithms
     python benchmark.py --no-negative          # skip the negative configs
     python benchmark.py -o results/run.png     # choose the output path
 
-The default sweep covers 100 and 500 vertices in three regimes each: sparse
-(undirected, p = 0.05), dense (undirected, complete), and negative (directed,
-sparse, weights from -5 to 10). The negative configurations exist so that
-Johnson's algorithm and Bellman-Ford are exercised on the input class they were
-designed for, rather than only on inputs where a plain Dijkstra would do.
+Every sweep covers three regimes per size: sparse (undirected, p = 0.05), dense
+(undirected, complete), and negative (directed, sparse, weights from -5 to 10).
+The negative configurations exist so that Johnson's algorithm and Bellman-Ford
+are exercised on the input class they were designed for, rather than only on
+inputs where a plain Dijkstra would do.
 
-See the README for the run times to expect: the 500-vertex dense configuration
-is very slow for the O(n^2 * m) algorithms.
+The default sizes are deliberately small so the whole thing finishes in a couple
+of minutes. Cost grows steeply with n -- Bellman-Ford is O(n^2 * m) and the
+dense generator makes m itself quadratic, so the 500-node dense cell alone runs
+for over an hour. Use ``--full`` when you want that, and expect to wait.
 
 The plot is always written to a file; nothing requires a display, so this runs
 fine over SSH or in CI.
@@ -64,7 +67,16 @@ ALGORITHMS = [
     ("sketch", "Sketch Approximate", sketch_approx_apsp),
 ]
 
-DEFAULT_SIZES = [100, 500]
+#: Sizes for the default run. Chosen so a bare ``python benchmark.py`` finishes
+#: in a couple of minutes while still giving three points per regime -- enough
+#: to see the growth curves rather than isolated measurements.
+DEFAULT_SIZES = [50, 100, 150]
+
+#: Sizes for ``--full``: the original coursework sweep. Takes hours, almost all
+#: of it in the 500-node dense cell, where Bellman-Ford's O(n^2 * m) and
+#: Johnson's O(m^2) reweighting both hit 249,500 edge entries.
+FULL_SIZES = [100, 500]
+
 DEFAULT_OUTPUT = os.path.join("results", "apsp_benchmark.png")
 
 
@@ -218,7 +230,8 @@ def parse_args(argv=None):
         default=DEFAULT_OUTPUT,
         help="path to write the plot to",
     )
-    parser.add_argument(
+    sizes_group = parser.add_mutually_exclusive_group()
+    sizes_group.add_argument(
         "-s",
         "--sizes",
         type=int,
@@ -226,6 +239,12 @@ def parse_args(argv=None):
         default=DEFAULT_SIZES,
         metavar="N",
         help="vertex counts to benchmark",
+    )
+    sizes_group.add_argument(
+        "--full",
+        action="store_true",
+        help="run the full %s sweep instead; takes hours, not minutes"
+        % " and ".join(str(s) for s in FULL_SIZES),
     )
     parser.add_argument(
         "-p",
@@ -271,8 +290,13 @@ def main(argv=None):
         chosen = set(args.algorithms)
         selected = [entry for entry in ALGORITHMS if entry[0] in chosen]
 
+    sizes = FULL_SIZES if args.full else args.sizes
+    if args.full:
+        print("Running the full %s sweep -- this takes hours, not minutes."
+              % " and ".join(str(s) for s in FULL_SIZES))
+
     configurations = build_configurations(
-        args.sizes, args.edge_probability, args.include_negative
+        sizes, args.edge_probability, args.include_negative
     )
     labels = [label for label, _, _ in configurations]
 
