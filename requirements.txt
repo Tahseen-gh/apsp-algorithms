@@ -1,0 +1,3 @@
+# Plotting for benchmark.py. The algorithms themselves and graph.py depend
+# only on the Python standard library (heapq, random, collections, time).
+matplotlib>=3.5
