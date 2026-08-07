@@ -73,10 +73,14 @@ entries are skipped on pop.
 
 - **Time:** O(n · (m + n log n)).
 - **Wins on:** sparse graphs with non-negative weights. When m ≪ n², n heap
-  searches beat Floyd-Warshall's fixed n³ comfortably. In practice (see below)
-  it is the fastest exact algorithm here in *every* configuration tested.
-- Requires non-negative weights — a negative edge can finalise a vertex before
-  its true shortest path is found.
+  searches beat Floyd-Warshall's fixed n³ comfortably — and in practice it is
+  the fastest exact algorithm here in *every* configuration tested, dense
+  included. See [finding 1](#1-repeated-dijkstra-beats-floyd-warshall-even-on-dense-graphs).
+- Textbook Dijkstra requires non-negative weights, but **this implementation
+  keeps no settled set**, so it re-expands improved vertices and stays correct
+  with negative edges absent a negative cycle. See
+  [finding 3](#3-this-dijkstra-is-not-textbook-dijkstra) — it is a real
+  robustness gain that costs the O(m log n) guarantee.
 
 ### Repeated Bellman-Ford — `all_pairs_bellman_ford(graph)`
 
@@ -120,25 +124,45 @@ sampled pivot lies on a path between the two vertices.
 |---|---|---|---|
 | Floyd-Warshall | O(n³) | Yes (no cycle detection) | Dense, small-to-medium n |
 | Johnson's | O(n² log n + n·m) | Yes, with detection | Sparse **with** negative weights |
-| Repeated Dijkstra | O(n · (m + n log n)) | No | Sparse, non-negative weights |
+| Repeated Dijkstra | O(n · (m + n log n)) | Yes here † | Sparse, non-negative weights |
 | Repeated Bellman-Ford | O(n² · m) | Yes, with detection | Simplicity / detection only |
-| Sketch approximation | O(k · (m + n log n)) | No | Very large graphs, approximate answers |
+| Sketch approximation | O(k · (m + n log n)) | Yes here † | Very large graphs, approximate answers |
+
+† Not a property of Dijkstra's algorithm — a property of *this* implementation,
+which omits the settled set and is therefore label-correcting. Correct without
+negative cycles, but without the O(m log n) bound. See
+[finding 3](#3-this-dijkstra-is-not-textbook-dijkstra).
 
 ## Benchmark
 
 ### Setup
 
-Four configurations — two sizes crossed with two density regimes:
+Six configurations — two sizes crossed with three weight/density regimes:
 
-| Configuration | Vertices | Edges | Generator |
-|---|---|---|---|
-| 100 nodes (Sparse) | 100 | ~250 | `generate_sparse_graph(100)`, p = 0.05 |
-| 100 nodes (Dense) | 100 | 4,950 | `generate_dense_graph(100)` |
-| 500 nodes (Sparse) | 500 | ~6,200 | `generate_sparse_graph(500)`, p = 0.05 |
-| 500 nodes (Dense) | 500 | 124,750 | `generate_dense_graph(500)` |
+| Configuration | Vertices | Edge entries | Directed? | Weights | Generator |
+|---|---|---|---|---|---|
+| 100 nodes (Sparse) | 100 | ~500 | undirected | 1…10 | `generate_sparse_graph(100)`, p = 0.05 |
+| 100 nodes (Dense) | 100 | 9,900 | undirected | 1…10 | `generate_dense_graph(100)` |
+| 100 nodes (Negative) | 100 | ~250 | directed | −5…10 | `generate_negative_weight_graph(100)`, p = 0.05 |
+| 500 nodes (Sparse) | 500 | ~12,400 | undirected | 1…10 | `generate_sparse_graph(500)`, p = 0.05 |
+| 500 nodes (Dense) | 500 | 249,500 | undirected | 1…10 | `generate_dense_graph(500)` |
+| 500 nodes (Negative) | 500 | ~6,200 | directed | −5…10 | `generate_negative_weight_graph(500)`, p = 0.05 |
 
 Sparse graphs include each candidate edge with probability 0.05; dense graphs
-include all of them. Weights are uniform integers from 1 to 10 in both cases.
+include all of them. Both are undirected, stored as two directed entries per
+connection — so "edge entries" is twice the number of distinct connections, and
+the dense 500-node graph is 20× the sparse one, exactly 1/p.
+
+The negative configurations exist because the first two never justify why
+Johnson's and Bellman-Ford are in the repo at all: with non-negative weights a
+plain Dijkstra is always available and always faster. **These graphs are
+directed on purpose.** An undirected edge of weight −3 is traversable in both
+directions and is therefore already a cycle of weight −6, so *every* undirected
+graph carrying a negative weight has a negative cycle, and the two algorithms
+being tested would do nothing but detect it and return. Emitting edges only from
+lower to higher vertex IDs makes the graph acyclic by construction, so shortest
+paths stay well defined at any weight range.
+
 Every algorithm is timed once per configuration with `time.time()` around a
 single run.
 
@@ -155,75 +179,39 @@ this works headless.
 ```
 python benchmark.py --sizes 100              # only the 100-vertex configs
 python benchmark.py -a dijkstra -a sketch    # only some algorithms (repeatable)
+python benchmark.py --no-negative            # skip the negative-weight configs
 python benchmark.py --seed 42                # reproducible graphs
 python benchmark.py -o results/run.png       # choose the output path
 python benchmark.py -p 0.10                  # denser "sparse" graphs
 python benchmark.py --help                   # all options
 ```
 
-**The full default sweep takes roughly an hour**, almost all of it in the two
-slowest cells: repeated Bellman-Ford and Johnson's on the 500-node dense graph.
-Use `--sizes 100` or `-a` to iterate quickly.
+**The full default sweep takes around two and a half hours**, almost all of it
+in two cells: repeated Bellman-Ford and Johnson's on the 500-node dense graph,
+which at 249,500 edge entries is where both algorithms' edge-count terms bite
+hardest. Use `--sizes 100` or `-a` to iterate quickly.
 
 ### Results
 
 Measured with `--seed 1` on Python 3.11, in seconds:
 
-| Algorithm | 100 sparse | 100 dense | 500 sparse | 500 dense |
-|---|---|---|---|---|
-| Floyd-Warshall | 0.062 | 0.077 | 9.427 | 10.058 |
-| Johnson's | 0.008 | 1.049 | 2.051 | ~670 † |
-| Repeated Dijkstra | 0.001 | 0.017 | 0.196 | 2.198 |
-| Repeated Bellman-Ford | 0.219 | 4.209 | 162.634 | ~3270 † |
-| Sketch approximation | 0.000 | 0.001 | 0.002 | 0.022 |
-
-† Extrapolated, not measured — these two cells take roughly 11 and 55 minutes
-respectively. Both scale on a countable quantity, so the projection is
-straightforward: repeated Bellman-Ford performs `n(n-1)m` edge relaxations, and
-the sparse 500-node cell fixes the rate at ~9.5M/s, giving 3.11e10 / 9.5e6 for
-the dense cell. Johnson's is dominated by its O(m²) reweighting (see point 4
-below), and the dense 100-node cell fixes that rate at ~23M/s.
-
-Four things stand out:
-
-1. **Floyd-Warshall barely notices density.** 9.43 s sparse versus 10.06 s dense
-   at n = 500, for a 20× difference in edge count — a clean confirmation that
-   O(n³) is independent of m. It is the only algorithm here with that property.
-
-2. **Repeated Dijkstra wins everywhere**, including the dense cases where
-   Floyd-Warshall is theoretically favoured. Both are O(n³) on a dense graph,
-   and the constant factors decide it: Dijkstra touches only real edges and
-   skips unreachable work, while Floyd-Warshall's triple loop runs all n³
-   iterations as interpreted Python regardless. On a compiled implementation
-   with a contiguous matrix, the dense column would likely flip.
-
-3. **Bellman-Ford degrades fastest with density**, as O(n²·m) predicts: 19× the
-   edges at n = 100 costs it 19× the time, while Floyd-Warshall is flat.
-
-4. **Johnson's is slower than the plain repeated Dijkstra it wraps.** That is
-   the reweighting, not the algorithm: `Graph.update_edge_weight` scans the
-   whole edge list on each call, so reweighting all m edges costs O(m²) and
-   dominates everything else on dense graphs. Indexing the edge list by
-   `(u, v)` would remove it.
-
-The headline caveat: **every generated graph has non-negative weights**, so the
-one thing Johnson's and Bellman-Ford exist for is never exercised. On these
-inputs Dijkstra is always legal, and an algorithm that pays extra to tolerate
-negative edges can only lose. Reading this as "Johnson's is bad" would invert
-what the benchmark actually shows — it measures overhead in a regime where the
-feature being paid for is not needed.
+The benchmark is currently being re-measured: making the sparse and dense
+generators undirected doubled their edge counts and added the negative-weight
+configurations, so every previously published number is stale. Run it yourself
+with `python benchmark.py --seed 1` — expect around two and a half hours for the
+full default sweep, or use `--sizes 100` for a fast pass.
 
 ## Notes and caveats
 
-Things worth knowing before drawing conclusions from these numbers. All of them
-describe existing behaviour — the algorithm implementations are unchanged.
+Things worth knowing before drawing conclusions from these numbers.
 
-- **The generated graphs are directed acyclic graphs.** `add_edge(u, v, w)`
-  records `u → v` only, and both generators emit edges only for `u < v`, so
-  every edge points from a lower to a higher vertex ID. Roughly half of all
-  vertex pairs are therefore unreachable and keep a distance of `INF`. The
-  inline comments describing the graphs as undirected reflect the intent, not
-  the resulting structure.
+- **The negative-weight graphs are directed, and so have unreachable pairs.**
+  `generate_negative_weight_graph` emits edges only for `u < v` to stay acyclic
+  (see [Setup](#setup)), so roughly half of all vertex pairs have no path and
+  keep a distance of `INF`. The sparse and dense generators are undirected and
+  do not have this property. This means the negative column is not directly
+  comparable to the other two: it is a different graph shape, not just a
+  different weight range.
 
 - **`johnson()` reweights its input in place.** It returns with the graph's edge
   weights left in reweighted form. The benchmark shares one graph object across
