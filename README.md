@@ -137,16 +137,27 @@ negative cycles, but without the O(m log n) bound. See
 
 ### Setup
 
-Six configurations — two sizes crossed with three weight/density regimes:
+Every size is run in three regimes, so a sweep of *k* sizes is *3k*
+configurations:
 
-| Configuration | Vertices | Edge entries | Directed? | Weights | Generator |
-|---|---|---|---|---|---|
-| 100 nodes (Sparse) | 100 | ~500 | undirected | 1…10 | `generate_sparse_graph(100)`, p = 0.05 |
-| 100 nodes (Dense) | 100 | 9,900 | undirected | 1…10 | `generate_dense_graph(100)` |
-| 100 nodes (Negative) | 100 | ~250 | directed | −5…10 | `generate_negative_weight_graph(100)`, p = 0.05 |
-| 500 nodes (Sparse) | 500 | ~12,400 | undirected | 1…10 | `generate_sparse_graph(500)`, p = 0.05 |
-| 500 nodes (Dense) | 500 | 249,500 | undirected | 1…10 | `generate_dense_graph(500)` |
-| 500 nodes (Negative) | 500 | ~6,200 | directed | −5…10 | `generate_negative_weight_graph(500)`, p = 0.05 |
+| Regime | Directed? | Weights | Edge entries at n | Generator |
+|---|---|---|---|---|
+| Sparse | undirected | 1…10 | ≈ p·n·(n−1) | `generate_sparse_graph(n)`, p = 0.05 |
+| Dense | undirected | 1…10 | n·(n−1) | `generate_dense_graph(n)` |
+| Negative | directed | −5…10 | ≈ p·n·(n−1)/2 | `generate_negative_weight_graph(n)`, p = 0.05 |
+
+The default sweep uses **n = 50, 100, 150** (nine configurations, about a
+minute). `--full` uses **n = 100, 500** — the original coursework sizes, and the
+source of the numbers in [Results](#results):
+
+| Configuration | Vertices | Edge entries |
+|---|---|---|
+| 100 nodes (Sparse) | 100 | ~500 |
+| 100 nodes (Dense) | 100 | 9,900 |
+| 100 nodes (Negative) | 100 | ~250 |
+| 500 nodes (Sparse) | 500 | ~12,400 |
+| 500 nodes (Dense) | 500 | 249,500 |
+| 500 nodes (Negative) | 500 | ~6,200 |
 
 Sparse graphs include each candidate edge with probability 0.05; dense graphs
 include all of them. Both are undirected, stored as two directed entries per
@@ -173,11 +184,32 @@ pip install -r requirements.txt
 python benchmark.py
 ```
 
-The plot is written to `results/apsp_benchmark.png` — nothing opens a window, so
-this works headless.
+That is the **quick sweep** and takes **a little over a minute**: sizes 50, 100
+and 150 across all three regimes, nine configurations in total. Three points per
+regime is enough to see each algorithm's growth curve rather than isolated
+measurements. The plot is written to `results/apsp_benchmark.png` — nothing
+opens a window, so this works headless.
+
+#### The full sweep
+
+```bash
+python benchmark.py --full
+```
+
+This runs the original coursework sizes, 100 and 500. **It takes hours, not
+minutes** — the numbers in [Results](#results) come from it. Almost all of the
+time goes to a single cell, the 500-node dense graph, where Bellman-Ford's
+O(n²·m) and Johnson's O(m²) reweighting both meet 249,500 edge entries:
+Bellman-Ford alone runs for over an hour there.
+
+Cost grows steeply with n in the dense regime, because the dense generator makes
+m itself quadratic. Between the quick sweep's largest cell and the full sweep's,
+n grows 3.3× while Bellman-Ford's time grows roughly 200×.
+
+#### Other options
 
 ```
-python benchmark.py --sizes 100              # only the 100-vertex configs
+python benchmark.py --sizes 100 200 300      # any sizes you like
 python benchmark.py -a dijkstra -a sketch    # only some algorithms (repeatable)
 python benchmark.py --no-negative            # skip the negative-weight configs
 python benchmark.py --seed 42                # reproducible graphs
@@ -186,20 +218,15 @@ python benchmark.py -p 0.10                  # denser "sparse" graphs
 python benchmark.py --help                   # all options
 ```
 
-**The full default sweep takes around two and a half hours**, almost all of it
-in two cells: repeated Bellman-Ford and Johnson's on the 500-node dense graph,
-which at 249,500 edge entries is where both algorithms' edge-count terms bite
-hardest. Use `--sizes 100` or `-a` to iterate quickly.
+`--sizes` and `--full` are mutually exclusive; `--sizes` accepts any vertex
+counts, so it is the general escape hatch in both directions.
 
 ### Results
 
-Measured with `--seed 1` on Python 3.11, in seconds:
-
-The benchmark is currently being re-measured: making the sparse and dense
-generators undirected doubled their edge counts and added the negative-weight
-configurations, so every previously published number is stale. Run it yourself
-with `python benchmark.py --seed 1` — expect around two and a half hours for the
-full default sweep, or use `--sizes 100` for a fast pass.
+The benchmark is currently being re-measured with `--full`: making the sparse
+and dense generators undirected doubled their edge counts and added the
+negative-weight configurations, so every previously published number is stale.
+Run `python benchmark.py` for the quick sweep in the meantime.
 
 ## Notes and caveats
 
