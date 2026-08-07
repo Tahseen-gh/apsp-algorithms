@@ -5,12 +5,17 @@ Run from the command line:
     python benchmark.py                        # full default sweep
     python benchmark.py --sizes 100            # just the 100-vertex configs
     python benchmark.py -a dijkstra -a johnson # only some algorithms
+    python benchmark.py --no-negative          # skip the negative configs
     python benchmark.py -o results/run.png     # choose the output path
 
-The default sweep reproduces the coursework setup: 100 and 500 vertices, each
-in a sparse (p = 0.05) and a dense (complete) regime, giving four
-configurations per algorithm. See the README for the run times to expect --
-the 500-vertex dense configuration is very slow for the O(n^2 * m) algorithms.
+The default sweep covers 100 and 500 vertices in three regimes each: sparse
+(undirected, p = 0.05), dense (undirected, complete), and negative (directed,
+sparse, weights from -5 to 10). The negative configurations exist so that
+Johnson's algorithm and Bellman-Ford are exercised on the input class they were
+designed for, rather than only on inputs where a plain Dijkstra would do.
+
+See the README for the run times to expect: the 500-vertex dense configuration
+is very slow for the O(n^2 * m) algorithms.
 
 The plot is always written to a file; nothing requires a display, so this runs
 fine over SSH or in CI.
@@ -37,10 +42,20 @@ from algorithms import (  # noqa: E402  (kept below the backend selection)
     johnson,
     sketch_approx_apsp,
 )
-from graph import generate_dense_graph, generate_sparse_graph  # noqa: E402
+from graph import (  # noqa: E402
+    generate_dense_graph,
+    generate_negative_weight_graph,
+    generate_sparse_graph,
+)
 
 #: Maps the CLI slug for each algorithm to its display name and callable. The
 #: order here is the order runs happen and the order series appear in the plot.
+#:
+#: All five run on every configuration, including the negative-weight ones.
+#: That is safe only because of an implementation detail: this Dijkstra keeps no
+#: settled set, so it re-expands improved vertices and stays correct without
+#: negative cycles. A textbook Dijkstra would be invalid there -- see the
+#: README's findings section.
 ALGORITHMS = [
     ("floyd-warshall", "Floyd-Warshall", floyd_warshall),
     ("johnson", "Johnson's Algorithm", johnson),
@@ -68,25 +83,36 @@ def measure_execution_time(algorithm, graph):
     return time.time() - start_time
 
 
-def build_configurations(sizes, edge_probability):
-    """Build the (label, graph) pairs to benchmark, sparse then dense per size.
+def build_configurations(sizes, edge_probability, include_negative=True):
+    """Build the configurations to benchmark: sparse, dense, negative per size.
+
+    The sparse and dense graphs are undirected with weights from 1 to 10. The
+    negative configuration is sparse and directed, which is what keeps it free
+    of negative cycles -- see
+    :func:`~graph.generate_negative_weight_graph` for why that matters.
 
     Args:
         sizes: Vertex counts to test, in order.
         edge_probability: Edge probability for the sparse graphs.
+        include_negative: Whether to add the negative-weight configuration.
 
     Returns:
-        A list of ``(label, graph)`` tuples ordered sparse-then-dense within
-        each size, matching the original notebook's sweep.
+        A list of ``(label, graph, has_negative_weights)`` tuples.
     """
     configurations = []
     for size in sizes:
         configurations.append(
-            ("%d nodes (Sparse)" % size, generate_sparse_graph(size, edge_probability))
+            ("%d nodes (Sparse)" % size,
+             generate_sparse_graph(size, edge_probability), False)
         )
         configurations.append(
-            ("%d nodes (Dense)" % size, generate_dense_graph(size))
+            ("%d nodes (Dense)" % size, generate_dense_graph(size), False)
         )
+        if include_negative:
+            configurations.append(
+                ("%d nodes (Negative)" % size,
+                 generate_negative_weight_graph(size, edge_probability), True)
+            )
     return configurations
 
 
@@ -101,8 +127,9 @@ def run_benchmark(configurations, selected):
     timings, but it is worth knowing when interpreting them.
 
     Args:
-        configurations: ``(label, graph)`` pairs from :func:`build_configurations`.
-        selected: ``(slug, display_name, callable)`` triples to time.
+        configurations: ``(label, graph, has_negative)`` triples from
+            :func:`build_configurations`.
+        selected: ``(slug, display_name, callable)`` entries to time.
 
     Returns:
         A dict mapping display name to a list of durations, one per
@@ -110,7 +137,7 @@ def run_benchmark(configurations, selected):
     """
     execution_times = {name: [] for _, name, _ in selected}
 
-    for label, graph in configurations:
+    for label, graph, _ in configurations:
         print("\n%s -- %d edges" % (label, len(graph.edges)))
         for _, name, algorithm in selected:
             sys.stdout.write("  %-22s " % name)
@@ -218,6 +245,12 @@ def parse_args(argv=None):
         + ", ".join(slug for slug, _, _ in ALGORITHMS),
     )
     parser.add_argument(
+        "--no-negative",
+        dest="include_negative",
+        action="store_false",
+        help="skip the negative-weight configurations",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -238,8 +271,10 @@ def main(argv=None):
         chosen = set(args.algorithms)
         selected = [entry for entry in ALGORITHMS if entry[0] in chosen]
 
-    configurations = build_configurations(args.sizes, args.edge_probability)
-    labels = [label for label, _ in configurations]
+    configurations = build_configurations(
+        args.sizes, args.edge_probability, args.include_negative
+    )
+    labels = [label for label, _, _ in configurations]
 
     execution_times = run_benchmark(configurations, selected)
 

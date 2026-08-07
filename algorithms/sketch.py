@@ -49,7 +49,8 @@ def sketch_approx_apsp(graph, k=5):
     preprocessing only -- the Dijkstra runs and the reverse-graph build -- which
     is what makes it the fastest entry in the benchmark.
 
-    Requires non-negative edge weights, since the preprocessing is Dijkstra.
+    The preprocessing is Dijkstra, so it inherits that implementation's
+    tolerance for negative edges on graphs without negative cycles.
 
     Args:
         graph: The :class:`~graph.Graph` to preprocess.

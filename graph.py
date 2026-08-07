@@ -1,7 +1,9 @@
 """Graph representation and random graph generators.
 
 This module holds the shared data structure used by every algorithm in
-``algorithms/``, plus the two generators used to build benchmark inputs.
+``algorithms/``, plus the three generators used to build benchmark inputs:
+two undirected positive-weight generators (sparse and dense) and one directed
+generator carrying negative weights.
 
 The graph is stored twice, in two complementary forms:
 
@@ -26,8 +28,10 @@ INF = float('inf')
 class Graph:
     """A weighted directed graph over vertices ``0 .. num_vertices - 1``.
 
-    Edges are directed: ``add_edge(u, v, w)`` records ``u -> v`` only. The
-    generators below exploit this by emitting a single edge per vertex pair.
+    Edges are directed: ``add_edge(u, v, w)`` records ``u -> v`` only. An
+    undirected graph is built by adding both directions, which is what the
+    sparse and dense generators below do; the negative-weight generator adds a
+    single direction to stay acyclic.
 
     Attributes:
         num_vertices: Number of vertices; vertex IDs are ``range(num_vertices)``.
@@ -104,14 +108,12 @@ class Graph:
 def generate_sparse_graph(num_vertices, edge_probability=0.05):
     """Generate a sparse random graph in the Erdos-Renyi G(n, p) style.
 
-    Each ordered pair ``u < v`` gets an edge with probability
-    ``edge_probability``, weighted uniformly at random from 1 to 10. The
-    expected edge count is ``p * n * (n - 1) / 2``, so at the default p = 0.05
-    a 100-vertex graph carries roughly 250 edges.
-
-    Because edges are only emitted for ``u < v``, the result is a directed
-    acyclic graph -- every edge points from a lower to a higher vertex ID.
-    Many vertex pairs are therefore unreachable and keep a distance of ``INF``.
+    Each unordered pair ``{u, v}`` gets an edge with probability
+    ``edge_probability``, weighted uniformly at random from 1 to 10. The graph
+    is undirected, represented by storing both directions of every edge, so the
+    expected edge count in :attr:`Graph.edges` is ``p * n * (n - 1)``: roughly
+    500 entries for a 100-vertex graph at the default p = 0.05, covering about
+    250 distinct connections.
 
     Args:
         num_vertices: Number of vertices in the generated graph.
@@ -122,20 +124,21 @@ def generate_sparse_graph(num_vertices, edge_probability=0.05):
     """
     graph = Graph(num_vertices)
     for u in range(num_vertices):
-        for v in range(u+1, num_vertices):  # Avoid duplicates (since undirected graph)
+        for v in range(u+1, num_vertices):  # Consider each unordered pair once
             if random.random() < edge_probability:  # 5% chance to add an edge
                 weight = random.randint(1, 10)  # Random weight between 1 and 10
                 graph.add_edge(u, v, weight)
+                graph.add_edge(v, u, weight)  # Undirected: traversable both ways
     return graph
 
 
 def generate_dense_graph(num_vertices):
     """Generate a dense random graph containing every ``u < v`` edge.
 
-    This is :func:`generate_sparse_graph` with the coin flip removed, giving
-    exactly ``n * (n - 1) / 2`` edges -- 4,950 at n = 100 and 124,750 at
-    n = 500. Weights are again uniform from 1 to 10, and the same ``u < v``
-    orientation makes the result acyclic.
+    This is :func:`generate_sparse_graph` with the coin flip removed, giving a
+    complete undirected graph: ``n * (n - 1)`` stored entries for
+    ``n * (n - 1) / 2`` distinct connections -- 9,900 entries at n = 100 and
+    249,500 at n = 500. Weights are again uniform from 1 to 10.
 
     Args:
         num_vertices: Number of vertices in the generated graph.
@@ -145,7 +148,47 @@ def generate_dense_graph(num_vertices):
     """
     graph = Graph(num_vertices)
     for u in range(num_vertices):
-        for v in range(u+1, num_vertices):  # Avoid duplicates (since undirected graph)
+        for v in range(u+1, num_vertices):  # Consider each unordered pair once
             weight = random.randint(1, 10)  # Random weight between 1 and 10
             graph.add_edge(u, v, weight)
+            graph.add_edge(v, u, weight)  # Undirected: traversable both ways
+    return graph
+
+
+def generate_negative_weight_graph(num_vertices, edge_probability=0.05,
+                                   min_weight=-5, max_weight=10):
+    """Generate a sparse graph containing negative edge weights.
+
+    This is the input regime Johnson's algorithm and Bellman-Ford exist for:
+    Dijkstra is simply invalid here, so the algorithms that tolerate negative
+    edges have something to prove that the other generators never ask of them.
+
+    Unlike the two generators above, this one is **directed** -- edges are
+    emitted only for ``u < v``. That is deliberate and load-bearing. An
+    undirected negative edge is traversable in both directions, so a single
+    edge of weight -3 is already a cycle of weight -6, and every undirected
+    graph carrying any negative weight has a negative cycle. Johnson's and
+    Bellman-Ford would detect it and return immediately, measuring nothing.
+    Emitting edges only from lower to higher vertex IDs makes the graph acyclic
+    by construction, so no negative cycle can exist at any weight range and
+    shortest paths are always well defined.
+
+    The cost of that choice is that roughly half of all vertex pairs are
+    unreachable and keep a distance of ``INF``.
+
+    Args:
+        num_vertices: Number of vertices in the generated graph.
+        edge_probability: Independent probability of each candidate edge.
+        min_weight: Lowest possible edge weight; negative by default.
+        max_weight: Highest possible edge weight.
+
+    Returns:
+        A newly built :class:`Graph`, guaranteed free of negative cycles.
+    """
+    graph = Graph(num_vertices)
+    for u in range(num_vertices):
+        for v in range(u+1, num_vertices):  # u < v only: keeps the graph acyclic
+            if random.random() < edge_probability:
+                weight = random.randint(min_weight, max_weight)
+                graph.add_edge(u, v, weight)
     return graph

@@ -3,6 +3,10 @@
 Dijkstra solves the single-source shortest path (SSSP) problem on graphs with
 non-negative edge weights. Running it once from every vertex solves APSP.
 
+This particular implementation keeps no settled set, so it is label-correcting
+and tolerates negative edges in practice -- see :func:`dijkstra` for what that
+buys and what it costs.
+
 Time complexity:
     * Single source: O(m log n) with a binary heap.
     * All pairs: O(n * (m + n log n)).
@@ -24,8 +28,18 @@ def dijkstra(graph, source):
     they surface. This leaves at most one heap entry per relaxation, so the
     heap holds O(m) entries rather than O(n).
 
-    Correctness requires non-negative weights -- with a negative edge, a vertex
-    can be finalised before its true shortest path is found.
+    Note there is no settled/visited set: the ``d > dist[u]`` test rejects only
+    *stale* heap entries, not vertices that have already been expanded. A vertex
+    whose distance later improves is therefore pushed and expanded again, which
+    makes this label-correcting rather than textbook Dijkstra. The practical
+    consequence is that it stays correct on graphs with negative edges (as long
+    as there is no negative cycle), where a settled-set implementation would
+    finalise a vertex too early and return a wrong answer.
+
+    That robustness is not free: the O(m log n) bound assumes each vertex is
+    expanded once, which negative edges can break. Re-expansions are cheap on
+    the benchmark's acyclic negative graphs but are exponential in the worst
+    case.
 
     Args:
         graph: The :class:`~graph.Graph` to search.
