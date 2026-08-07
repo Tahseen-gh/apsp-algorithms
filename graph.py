@@ -69,6 +69,22 @@ class Graph:
             new_g.add_edge(u, v, w)
         return new_g
 
+    def reverse(self):
+        """Return a new graph with every edge direction flipped.
+
+        Searching the reverse graph from a vertex ``p`` yields the distances
+        *into* ``p`` -- ``d(u -> p)`` for every ``u`` -- which a forward search
+        cannot produce on a directed graph. The sketch oracle needs exactly
+        that to compose a real path through a pivot.
+
+        On an undirected graph the reverse is isomorphic to the original, so
+        this is only load-bearing for directed input.
+        """
+        new_g = Graph(self.num_vertices)
+        for u, v, w in self.edges:
+            new_g.add_edge(v, u, w)
+        return new_g
+
     def update_edge_weight(self, u, v, new_w):
         """Set the weight of every ``u -> v`` edge to ``new_w``, in place.
 
