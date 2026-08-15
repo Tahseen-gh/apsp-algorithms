@@ -8,7 +8,7 @@ No single algorithm wins outright. Each owns a different corner of the input
 space, and the benchmark here is mostly about finding where the boundaries
 actually fall, which turned out to be harder than I expected.
 
-Graduate coursework. Pure Python, nothing outside the standard library except
+Graduate project, nothing outside the standard library except
 matplotlib for the plot.
 
 ## What's in here
